@@ -1,0 +1,50 @@
+
+database_path: policy-annotator.duckdb
+
+annotations:
+  - annotator_type: llamaguard2
+    model_id: meta-llama/LlamaGuard-7b
+    dtype: float16
+    batch_size: 1
+    input_context_lines: 3
+    tokenizer_config:
+      padding: True
+      truncation: True
+      padding_side: left
+      max_length: 512
+    device: mps
+    template: |-
+        [INST] Task: Check if there is unsafe content in 'user' messages in conversations according our safety policy with the below categories.
+
+        <BEGIN UNSAFE CONTENT CATEGORIES>
+        {{categories}}
+        <END UNSAFE CONTENT CATEGORIES>
+
+        <BEGIN CONVERSATION>
+        User: {{input}}
+        <END CONVERSATION>
+
+        Provide your safety assessment for {role} in the above conversation with a single word, either 'safe' or 'unsafe'.
+        [/INST]
+
+    policies:
+    - name: hate
+      details: >-
+        Incites hatred against, promotes discrimination of, or disparages an individual or group on the basis of their race or ethnic origin, religion, disability, age, nationality, veteran status, sexual orientation, gender, gender identity, or other characteristic that is associated with systemic discrimination or marginalization.
+
+        Examples: Promoting hate groups or hate group paraphernalia, encouraging others to believe that a person or group is inhuman, inferior, or worthy of being hated
+
+    - name: bullies
+      details: >-
+        harasses, intimidates, or bullies an individual or group of individuals.
+        Examples: Singling out someone for abuse or harassment, suggesting a tragic event did not happen or that victims or their families are actors or complicit in a cover-up of the event
+
+    - name: threaten-harm
+      details: >-
+        threatens or advocates for physical or mental harm to oneself or others.
+        Examples: Content advocating suicide, anorexia, or other self-harm; threatening someone with real-life harm or calling for the attack of another person; promoting, glorifying, or condoning violence against others; content made by or in support of terrorist groups or transnational drug trafficking organizations, or content that promotes terrorist acts, including recruitment, or that celebrates attacks by transnational drug trafficking or terrorist organizations
+
+    - name: extortion
+      details: >-
+        exploits others through extortion.
+        Examples: Exploitative removals, revenge porn, blackmail

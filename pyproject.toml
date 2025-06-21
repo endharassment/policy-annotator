@@ -1,0 +1,18 @@
+[project]
+name = "policy-annotator"
+version = "0.1.0"
+description = "Annotate text files with configurable policy"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "accelerate>=1.8.1",
+    "datasets>=3.6.0",
+    "duckdb>=1.3.1",
+    "pydantic>=2.11.7",
+    "pyyaml>=6.0.2",
+    "rich>=14.0.0",
+    "sqlmodel>=0.0.24",
+    "torch>=2.7.1",
+    "transformers>=4.52.4",
+    "typer>=0.16.0",
+]
