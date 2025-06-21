@@ -11,6 +11,7 @@ from datasets import Dataset, fingerprint
 from pydantic import BaseModel
 from rich import print
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import jinja2
 
 class BaseAnnotation(BaseModel):
     """
@@ -39,37 +40,68 @@ class LlamaGuard2Annotation(BaseAnnotation):
     input_context_lines: int = 3
     device: str = "cpu"
     template: str
+    scoring_function: str
     policies: list[LlamaGuard2Policy]
 
-    @cached_property
-    def hash(self) -> str:
-        return xxhash.xxh64_hexdigest(self.model_dump_json())
-
     def __call__(self, dataset: Dataset) -> Dataset:
+        fingerprint.disable_caching()
         with self._load_model() as (tokenizer, model):
             if getattr(tokenizer, "pad_token", None) is None:
                 print("Warning: No pad token found")
                 tokenizer.pad_token = tokenizer.eos_token
             dataset.set_format(type="torch")
+
+            # Add context lines to the raw text
+            def _add_context_lines(batch):
+                # Add context lines to the raw text
+                batch["context"] = [
+                    "\n".join(batch["raw_text"][max(0, i-self.input_context_lines):i+1])
+                    for i in range(0, len(batch["raw_text"]))
+                ]
+                return batch
+            dataset = dataset.map(_add_context_lines, batched=True, batch_size=len(dataset))
+
+            policy_template = jinja2.Template(self.template)
+            def _expand_policies(batch):
+                # Expand the prompt template for all policies
+                batch = {k: v*len(self.policies) for k, v in batch.items()}
+                batch["input"] = []
+                batch["policy_name"] = []
+                for policy in self.policies:
+                    # Render the template with the policy details
+                    rendered_text = policy_template.render(
+                        policy_details=policy.details,
+                        raw_text=batch["context"][0],
+                    )
+                    batch["input"].append(rendered_text)
+                    batch["policy_name"].append(policy.name)
+                return batch
+            dataset = dataset.map(_expand_policies, batched=True, batch_size=1)
+            print(dataset)
             print(dataset[0])
             def _infer(batch):
                 inputs = tokenizer(
-                    batch["raw_text"],
+                    batch["input"],
                     **self.tokenizer_config,
                     return_tensors="pt",
                 )
-                print(inputs['attention_mask'].sum(dim=-1))
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 with torch.inference_mode():
                     outputs = model(**inputs)
                 logits = outputs.logits
-                predictions = logits.argmax(dim=-1).cpu().numpy()
-                return {"predictions": predictions}
+                batch['token_len'] = inputs['attention_mask'].sum(dim=-1)
+                scores = logits[..., 0, tokenizer.vocab["▁unsafe"]] / (
+                    logits[..., 0, tokenizer.vocab["▁safe"]]
+                    + logits[..., 0, tokenizer.vocab["▁unsafe"]]
+                )
+                batch['score'] = scores
+                print(batch)
+                print(logits.shape)
+                return batch
             dataset = dataset.map(
                 _infer,
                 batched=True,
                 batch_size=self.batch_size,
-                new_fingerprint=self.hash,
             )
         return dataset
 
@@ -82,6 +114,7 @@ class LlamaGuard2Annotation(BaseAnnotation):
             torch_dtype=self.dtype,
             device_map=self.device,
         )
+        model.compile(backend='eager')
 
         with torch.inference_mode():
             yield tokenizer, model
@@ -106,10 +139,10 @@ def main(
             "file_hash": xxhash.xxh64_hexdigest(line.encode("utf-8")),
           } for line in input_file.read_text().splitlines()]
     )
+
     print(ds)
     for annotator in config.annotations:
         ds = annotator(ds)
-        import IPython; IPython.embed()
 
 
 if __name__ == "__main__":

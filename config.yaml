@@ -5,7 +5,7 @@ annotations:
   - annotator_type: llamaguard2
     model_id: meta-llama/LlamaGuard-7b
     dtype: float16
-    batch_size: 1
+    batch_size: 4
     input_context_lines: 3
     tokenizer_config:
       padding: True
@@ -13,21 +13,19 @@ annotations:
       padding_side: left
       max_length: 512
     scoring_function: |
-      logits[tokenizer.vocab['▁unsafe']] /
-      (logits[tokenizer.vocab['▁safe']] + logits[tokenizer.vocab['▁unsafe']])
     device: mps
     template: |-
         [INST] Task: Check if there is unsafe content in 'user' messages in conversations according our safety policy with the below categories.
 
         <BEGIN UNSAFE CONTENT CATEGORIES>
-        {{categories}}
+        {{policy_details}}
         <END UNSAFE CONTENT CATEGORIES>
 
         <BEGIN CONVERSATION>
-        User: {{input}}
+        User: {{raw_text}}
         <END CONVERSATION>
 
-        Provide your safety assessment for {role} in the above conversation with a single word, either 'safe' or 'unsafe'.
+        Provide your safety assessment for user messages in the above conversation with a single word, either 'safe' or 'unsafe'.
         [/INST]
 
     policies:
