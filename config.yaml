@@ -12,6 +12,9 @@ annotations:
       truncation: True
       padding_side: left
       max_length: 512
+    scoring_function: |
+      logits[tokenizer.vocab['▁unsafe']] /
+      (logits[tokenizer.vocab['▁safe']] + logits[tokenizer.vocab['▁unsafe']])
     device: mps
     template: |-
         [INST] Task: Check if there is unsafe content in 'user' messages in conversations according our safety policy with the below categories.
