@@ -23,8 +23,10 @@ Score a bunch of raw text against a user-configurable set of policies.
 A LlamaGuard2-based model will score each line of text against each policy.
 
 Data workflow:
-- Each line of the input text becomes a sample in the dataset, including context lines above (like grep -A 3)
-- For each policy, we create a prompt template by combining the policy details/examples with a model-specific template.
+- Each line of the input text becomes a sample in the dataset, including
+  context lines above (like grep -A 3)
+- For each policy, we create a prompt template by combining the policy
+  details/examples with a model-specific template.
 - Input is passed through model.forward once to get logits for each token.
 """
 
@@ -65,7 +67,8 @@ class BaseAnnotator(HashableModel):
 
 class LlamaGuard2Policy(HashableModel):
     """
-    A single policy to score separately, like 'hate speech', 'sexual content', ...
+    A single policy to score separately, like 'hate speech',
+    'sexual content', ...
     """
     name: str
     details: str
@@ -87,7 +90,10 @@ class Llamaguard2Annotator(BaseAnnotator):
     Llamaguard-2 models take a configurable policy / list of categories
     and returns a static "safe" or "unsafe" scores for each category.
 
-    To turn this into a threashold, we take the raw outputs for the "safe" and "unsafe" tokens at the end of the sequence. The model returns unnormalized log-probabilities for each token (incorrectly called "logits" by convention).
+    To turn this into a threashold, we take the raw outputs for the "safe"
+    and "unsafe" tokens at the end of the sequence. The model returns
+    unnormalized log-probabilities for each token (incorrectly called
+    "logits" by convention).
 
     We can then turn this into an actual probability by applying:
        sigmoid(unsafe - safe),
@@ -95,7 +101,10 @@ class Llamaguard2Annotator(BaseAnnotator):
        exp(unsafe) / (exp(unsafe) + exp(safe))
     but more numerically stable.
 
-    It's generally better to use llamaguard-2 than llamaguard-4, because it was produced in April 2024, before Meta's policy change deprioritized hate speech. See https://krnel.ai/blog/2025-06-09-guardrail-comparison/ for a comparison.
+    It's generally better to use llamaguard-2 than llamaguard-4, because
+    it was produced in April 2024, before Meta's policy change
+    deprioritized hate speech. See
+    https://krnel.ai/blog/2025-06-09-guardrail-comparison/ for a comparison.
     """
     annotator_type: Literal["llamaguard2"]
     model_id: str
@@ -108,7 +117,8 @@ class Llamaguard2Annotator(BaseAnnotator):
 
     def preprocess(self, dataset: Dataset) -> Dataset:
         """
-        Add context lines to the dataset and expand the prompt template for all policies.
+        Add context lines to the dataset and expand the prompt template
+        for all policies.
         """
         def _add_context_lines(batch):
             batch["context"] = [
@@ -173,7 +183,9 @@ class Llamaguard2Annotator(BaseAnnotator):
 
     @contextmanager
     def _load_model(self) -> Generator[tuple[AutoTokenizer, AutoModelForCausalLM], None, None]:
-        print(f"Loading LlamaGuard2 model [blue]{self.model_id}[/blue] with dtype [blue]{self.dtype}[/blue] on device [blue]{_get_device()}[/blue]")
+        print(f"Loading LlamaGuard2 model [blue]{self.model_id}[/blue] "
+          f"with dtype [blue]{self.dtype}[/blue] "
+          f"on device [blue]{_get_device()}[/blue]")
         tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
