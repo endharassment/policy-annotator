@@ -4,12 +4,22 @@ database_path: policy-annotator.duckdb
 annotations:
   - annotator_type: llamaguard2
     model_id: meta-llama/LlamaGuard-7b
-    dtype: float16
-    batch_size: 1
-    input_context_lines: 5
-    tokenizer_config:
-      max_length: 1024
 
+    # recommend bfloat16 or float16
+    dtype: float16
+
+    # how many lines of each context to use
+    input_context_lines: 5
+
+    batch_size: 1
+
+    tokenizer_config:
+      # maximum number of tokens per prompt.
+      # all prompts will be padded/TRUNCATED to this length.
+      max_length: 1024
+      # (need to think of how to handle this.)
+
+    # model-specific template for each policy
     template: |-
         [INST] Task: Check if there is unsafe content in 'user' messages in conversations according our safety policy with the below categories.
 
@@ -25,6 +35,7 @@ annotations:
         [/INST]
 
     policies:
+    # each policy is scored separately by plugging it into the above template.
     - name: hate
       details: |-
         Incites hatred against, promotes discrimination of, or disparages an individual or group on the basis of their race or ethnic origin, religion, disability, age, nationality, veteran status, sexual orientation, gender, gender identity, or other characteristic that is associated with systemic discrimination or marginalization.
