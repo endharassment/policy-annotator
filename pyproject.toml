@@ -15,6 +15,6 @@ dependencies = [
     "sqlmodel>=0.0.24",
     "torch>=2.7.1",
     "transformers>=4.52.4",
-    "typer>=0.16.0",
+    "cyclopts>=2.2.0",
     "xxhash>=3.5.0",
 ]

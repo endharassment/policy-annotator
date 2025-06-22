@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Generator, Literal, Union
 
 import torch
-import typer
+import cyclopts
 import xxhash
 from datasets import Dataset, fingerprint
 from tqdm.auto import tqdm
@@ -16,13 +16,14 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import jinja2
 
 
-"""
+USAGE = """
 Policy annotation toolkit.
 
 Score a bunch of raw text against a user-configurable set of policies.
 A LlamaGuard2-based model will score each line of text against each policy.
 
 Data workflow:
+
 - Each line of the input text becomes a sample in the dataset, including
   context lines above (like grep -A 3)
 - For each policy, we create a prompt template by combining the policy
@@ -203,6 +204,9 @@ class Config(BaseModel):
     annotations: list[Union[Llamaguard2Annotator]]
 
 
+app = cyclopts.App(help=USAGE)
+
+@app.default
 def main(
     input_file: Path,
     config_path: Path = Path("config.yaml"),
@@ -228,6 +232,9 @@ def main(
         for result in annotator.annotate(preprocessed_ds):
             print(result)
 
-
 if __name__ == "__main__":
-    typer.run(main)
+    try:
+        app()
+    except (cyclopts.ValidationError, SystemExit) as e:
+        app(["--help"])
+        raise
