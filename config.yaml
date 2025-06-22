@@ -8,11 +8,8 @@ annotations:
     batch_size: 1
     input_context_lines: 5
     tokenizer_config:
-      padding: True
-      truncation: True
-      padding_side: left
-      max_length: 512
-    device: mps
+      max_length: 1024
+
     template: |-
         [INST] Task: Check if there is unsafe content in 'user' messages in conversations according our safety policy with the below categories.
 

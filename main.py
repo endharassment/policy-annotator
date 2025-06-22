@@ -15,39 +15,87 @@ from rich import print
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import jinja2
 
+
+"""
+Policy annotation toolkit.
+
+Score a bunch of raw text against a user-configurable set of policies.
+A LlamaGuard2-based model will score each line of text against each policy.
+
+Data workflow:
+- Each line of the input text becomes a sample in the dataset, including context lines above (like grep -A 3)
+- For each policy, we create a prompt template by combining the policy details/examples with a model-specific template.
+- Input is passed through model.forward once to get logits for each token.
+"""
+
+def _get_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
 class HashableModel(BaseModel):
     @property
     def hash(self):
         return xxhash.xxh64_hexdigest(self.model_dump_json())
 
-class BaseAnnotation(HashableModel):
+class BaseAnnotator(HashableModel):
     """
     Class that knows how to annotate a dataset.
     """
-    annotator_type: str # discriminated union type
+    annotator_type: str # discriminated union tag
+
     def preprocess(self, dataset: Dataset) -> Dataset:
+        """
+        Apply preprocessing to the dataset before annotation:
+        add model-specific context and assign a UID to each sample
+        to aid caching.
+
+        The dataset needs to have the following fields:
+        - raw_text: the text to annotate
+
+        After preprocessing, the dataset should have at least:
+        - uid: a unique identifier for each sample
+        """
         ...
     def annotate(self, dataset: Dataset) -> Generator["AnnotationResult"]:
         ...
 
 class LlamaGuard2Policy(HashableModel):
     """
-    A single policy, like 'hate speech', 'sexual content', ...
+    A single policy to score separately, like 'hate speech', 'sexual content', ...
     """
     name: str
     details: str
 
 class AnnotationResult(BaseModel):
+    """One score of a single line of text against a single policy."""
     uid: str
+    file_name: str
     file_line: int
     policy_name: str
     raw_text: str
     next_token: int
     score: float
 
-class LlamaGuard2Annotation(BaseAnnotation):
+class Llamaguard2Annotator(BaseAnnotator):
     """
-    Annotation that uses LlamaGuard2-based models for text classification.
+    Annotator that uses LlamaGuard2-based models for text classification.
+
+    Llamaguard-2 models take a configurable policy / list of categories
+    and returns a static "safe" or "unsafe" scores for each category.
+
+    To turn this into a threashold, we take the raw outputs for the "safe" and "unsafe" tokens at the end of the sequence. The model returns unnormalized log-probabilities for each token (incorrectly called "logits" by convention).
+
+    We can then turn this into an actual probability by applying:
+       sigmoid(unsafe - safe),
+    which is equivalent to
+       exp(unsafe) / (exp(unsafe) + exp(safe))
+    but more numerically stable.
+
+    It's generally better to use llamaguard-2 than llamaguard-4, because it was produced in April 2024, before Meta's policy change deprioritized hate speech. See https://krnel.ai/blog/2025-06-09-guardrail-comparison/ for a comparison.
     """
     annotator_type: Literal["llamaguard2"]
     model_id: str
@@ -55,7 +103,6 @@ class LlamaGuard2Annotation(BaseAnnotation):
     batch_size: int = 1
     tokenizer_config: dict
     input_context_lines: int = 3
-    device: str = "cpu"
     template: str
     policies: list[LlamaGuard2Policy]
 
@@ -102,8 +149,11 @@ class LlamaGuard2Annotation(BaseAnnotation):
                     batch["input"],
                     **self.tokenizer_config,
                     return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    padding_side='left',
                 )
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                inputs = {k: v.to(_get_device()) for k, v in inputs.items()}
                 with torch.inference_mode():
                     outputs = model(**inputs)
                 logits = outputs.logits
@@ -114,8 +164,8 @@ class LlamaGuard2Annotation(BaseAnnotation):
                 scores = torch.sigmoid(unsafe - safe)
                 batch['score'] = scores
                 batch['next_token'] = logits[..., -1, :].argmax(dim=-1)
-                print(batch)
-                print(logits.shape)
+                print("Batch:", batch)
+                print("Logit shape:", logits.shape)
                 for i in range(len(batch['input'])):
                     yield AnnotationResult.model_validate({
                         k: batch[k][i] for k in batch.keys()
@@ -123,12 +173,12 @@ class LlamaGuard2Annotation(BaseAnnotation):
 
     @contextmanager
     def _load_model(self) -> Generator[tuple[AutoTokenizer, AutoModelForCausalLM], None, None]:
-        print(f"Loading LlamaGuard2 model [blue]{self.model_id}[/blue] with dtype [blue]{self.dtype}[/blue] on device [blue]{self.device}[/blue]")
+        print(f"Loading LlamaGuard2 model [blue]{self.model_id}[/blue] with dtype [blue]{self.dtype}[/blue] on device [blue]{_get_device()}[/blue]")
         tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
             torch_dtype=self.dtype,
-            device_map=self.device,
+            device_map=_get_device(),
         )
         model.compile(backend='eager')
 
@@ -138,7 +188,7 @@ class LlamaGuard2Annotation(BaseAnnotation):
 
 class Config(BaseModel):
     database_path: Path
-    annotations: list[Union[LlamaGuard2Annotation]]
+    annotations: list[Union[Llamaguard2Annotator]]
 
 
 def main(
@@ -151,17 +201,18 @@ def main(
     ds = Dataset.from_list(
         [{
             "raw_text": line,
-            "filename": str(input_file),
+            "file_name": str(input_file),
             "file_line": i + 1,
-            "file_hash": xxhash.xxh64_hexdigest(line.encode("utf-8")),
           } for i, line in enumerate(input_file.read_text().splitlines()) if line.strip()]
     )
 
-    print(ds)
+    # TODO: strip out time codes in input
+    # TODO: caching, for easier resumption
+
+    print("Dataset:", ds)
     for annotator in config_path.annotations:
         preprocessed_ds = annotator.preprocess(ds)
         print(preprocessed_ds)
-        print(preprocessed_ds[0])
         for result in annotator.annotate(preprocessed_ds):
             print(result)
 
