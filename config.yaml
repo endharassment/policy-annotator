@@ -1,5 +1,5 @@
 
-database_path: policy-annotator.duckdb
+database_path: policy-annotator.sqlite
 
 annotations:
   - annotator_type: llamaguard2

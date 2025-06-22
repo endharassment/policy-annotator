@@ -11,6 +11,7 @@ import xxhash
 from datasets import Dataset, fingerprint
 from tqdm.auto import tqdm
 from pydantic import BaseModel
+from sqlmodel import SQLModel, Field, create_engine, Session, select
 from rich import print
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import jinja2
@@ -74,15 +75,45 @@ class LlamaGuard2Policy(HashableModel):
     name: str
     details: str
 
-class AnnotationResult(BaseModel):
+class AnnotationResult(SQLModel, table=True):
     """One score of a single line of text against a single policy."""
-    uid: str
+    uid: str = Field(primary_key=True)
     file_name: str
     file_line: int
+    token_len: int
     policy_name: str
     raw_text: str
     next_token: int
     score: float
+
+    def save(self, engine) -> None:
+        """Save an annotation result to the database."""
+        with Session(engine) as session:
+            session.add(self)
+            session.commit()
+
+def create_database(database_path: Path):
+    """Create database and tables if they don't exist."""
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    return engine
+
+def filter_existing_samples(dataset: Dataset, engine) -> Dataset:
+    """Filter out samples that already have results in the database."""
+    with Session(engine) as session:
+        existing_uids = set()
+        statement = select(AnnotationResult.uid)
+        results = session.exec(statement)
+        existing_uids = set(results.all())
+
+    if not existing_uids:
+        return dataset
+
+    def filter_fn(sample):
+        return sample["uid"] not in existing_uids
+
+    return dataset.filter(filter_fn)
+
 
 class Llamaguard2Annotator(BaseAnnotator):
     """
@@ -212,7 +243,10 @@ def main(
     config_path: Path = Path("config.yaml"),
 ):
     config_data = yaml.safe_load(config_path.read_text())
-    config_path = Config.model_validate(config_data)
+    config = Config.model_validate(config_data)
+
+    # Initialize database
+    engine = create_database(config.database_path)
 
     ds = Dataset.from_list(
         [{
@@ -223,18 +257,23 @@ def main(
     )
 
     # TODO: strip out time codes in input
-    # TODO: caching, for easier resumption
 
     print("Dataset:", ds)
-    for annotator in config_path.annotations:
+    for annotator in config.annotations:
         preprocessed_ds = annotator.preprocess(ds)
-        print(preprocessed_ds)
-        for result in annotator.annotate(preprocessed_ds):
+
+        # Filter out samples that already exist in database
+        filtered_ds = filter_existing_samples(preprocessed_ds, engine)
+        print(f"Filtered dataset: {len(filtered_ds)} samples (from {len(preprocessed_ds)} total)")
+
+        if len(filtered_ds) == 0:
+            print("All samples already processed, skipping...")
+            continue
+
+        for result in annotator.annotate(filtered_ds):
             print(result)
+            # Save each result to database
+            result.save(engine)
 
 if __name__ == "__main__":
-    try:
-        app()
-    except (cyclopts.ValidationError, SystemExit) as e:
-        app(["--help"])
-        raise
+    app()
