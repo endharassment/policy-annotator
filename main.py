@@ -1,6 +1,7 @@
 from collections import defaultdict
 from functools import cached_property
 import yaml
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Literal, Union
@@ -89,7 +90,7 @@ class AnnotationResult(SQLModel, table=True):
     def save(self, engine) -> None:
         """Save an annotation result to the database."""
         with Session(engine) as session:
-            session.add(self)
+            session.merge(self)
             session.commit()
 
 def create_database(database_path: Path):
@@ -152,10 +153,16 @@ class Llamaguard2Annotator(BaseAnnotator):
         Add context lines to the dataset and expand the prompt template
         for all policies.
         """
+        timecode_regex = re.compile(r"^\[[0-9:.-]+\]\s*")
+        def _remove_timecodes(batch):
+            # Remove timecodes from the raw text
+            batch["raw_text_no_timecode"] = timecode_regex.sub("", batch["raw_text"])
+            return batch
+        dataset = dataset.map(_remove_timecodes)
         def _add_context_lines(batch):
             batch["context"] = [
-                "\n".join(batch["raw_text"][max(0, i-self.input_context_lines):i+1])
-                for i in range(0, len(batch["raw_text"]))
+                "\n".join(batch["raw_text_no_timecode"][max(0, i-self.input_context_lines):i+1])
+                for i in range(0, len(batch["raw_text_no_timecode"]))
             ]
             return batch
         dataset = dataset.map(
